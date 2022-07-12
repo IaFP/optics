@@ -1,4 +1,5 @@
 {-# OPTIONS_HADDOCK not-home #-}
+{-# LANGUAGE QuantifiedConstraints, UndecidableInstances #-}
 -- | Definitions of concrete profunctors and profunctor classes.
 module Data.Profunctor.Indexed
   (
@@ -55,12 +56,12 @@ module Data.Profunctor.Indexed
 import Data.Coerce (Coercible, coerce)
 import Data.Functor.Const
 import Data.Functor.Identity
-
+import GHC.Types (type (@), Total)
 ----------------------------------------
 -- Concrete profunctors
 
 -- | Needed for traversals.
-newtype Star f i a b = Star { runStar :: a -> f b }
+newtype f @ b => Star f i a b = Star { runStar :: a -> f b }
 
 -- | Needed for getters and folds.
 newtype Forget r i a b = Forget { runForget :: a -> r }
@@ -72,7 +73,7 @@ newtype ForgetM r i a b = ForgetM { runForgetM :: a -> Maybe r }
 newtype FunArrow i a b = FunArrow { runFunArrow :: a -> b }
 
 -- | Needed for indexed traversals.
-newtype IxStar f i a b = IxStar { runIxStar :: i -> a -> f b }
+newtype f @ b => IxStar f i a b = IxStar { runIxStar :: i -> a -> f b }
 
 -- | Needed for indexed folds.
 newtype IxForget r i a b = IxForget { runIxForget :: i -> a -> r }
@@ -164,7 +165,7 @@ rcoerce = rcoerce'
 lcoerce :: (Coercible a b, Profunctor p) => p i a c -> p i b c
 lcoerce = lcoerce'
 
-instance Functor f => Profunctor (StarA f) where
+instance (Total f, Functor f) => Profunctor (StarA f) where
   dimap f g (StarA point k) = StarA point (fmap g . k . f)
   lmap  f   (StarA point k) = StarA point (k . f)
   rmap    g (StarA point k) = StarA point (fmap g . k)
@@ -193,7 +194,7 @@ instance Profunctor FunArrow where
   lmap  f   (FunArrow k) = FunArrow (k . f)
   rmap    g (FunArrow k) = FunArrow (g . k)
 
-instance Functor f => Profunctor (IxStarA f) where
+instance (Total f, Functor f) => Profunctor (IxStarA f) where
   dimap f g (IxStarA point k) = IxStarA point (\i -> fmap g . k i . f)
   lmap  f   (IxStarA point k) = IxStarA point (\i -> k i . f)
   rmap    g (IxStarA point k) = IxStarA point (\i -> fmap g . k i)
@@ -248,6 +249,11 @@ class Profunctor p => Strong p where
     :: (forall f. Functor f => (a -> f b) -> s -> f t)
     -> p i a b
     -> p i s t
+  default linear
+    :: (p i (a, b -> t) @ (b, b -> t), p i @ (a, b -> t))
+    => (forall f. Functor f => (a -> f b) -> s -> f t)
+    -> p i a b
+    -> p i s t
   linear f = dimap
     ((\(Context bt a) -> (a, bt)) . f (Context id))
     (\(b, bt) -> bt b)
@@ -265,7 +271,7 @@ class Profunctor p => Strong p where
     -> p (i -> j) s t
   ilinear f = coerce . linear (\afb -> f $ \_ -> afb)
 
-instance Functor f => Strong (StarA f) where
+instance (Total f, Functor f) => Strong (StarA f) where
   first'  (StarA point k) = StarA point $ \ ~(a, c) -> (\b' -> (b', c)) <$> k a
   second' (StarA point k) = StarA point $ \ ~(c, a) -> (,) c <$> k a
 
@@ -295,7 +301,7 @@ instance Strong FunArrow where
 
   linear f (FunArrow k) = FunArrow $ runIdentity #. f (Identity #. k)
 
-instance Functor f => Strong (IxStarA f) where
+instance (Total f, Functor f) => Strong (IxStarA f) where
   first'  (IxStarA point k) = IxStarA point $ \i ~(a, c) -> (\b' -> (b', c)) <$> k i a
   second' (IxStarA point k) = IxStarA point $ \i ~(c, a) -> (,) c <$> k i a
 
@@ -344,7 +350,7 @@ class Profunctor p => Choice p where
   left'  :: p i a b -> p i (Either a c) (Either b c)
   right' :: p i a b -> p i (Either c a) (Either c b)
 
-instance Functor f => Choice (StarA f) where
+instance (Total f, Functor f) => Choice (StarA f) where
   left'  (StarA point k) = StarA point $ either (fmap Left . k) (point . Right)
   right' (StarA point k) = StarA point $ either (point . Left) (fmap Right . k)
 
@@ -364,7 +370,7 @@ instance Choice FunArrow where
   left'  (FunArrow k) = FunArrow $ either (Left . k) Right
   right' (FunArrow k) = FunArrow $ either Left (Right . k)
 
-instance Functor f => Choice (IxStarA f) where
+instance (Total f, Functor f) => Choice (IxStarA f) where
   left'  (IxStarA point k) =
     IxStarA point $ \i -> either (fmap Left . k i) (point . Right)
   right' (IxStarA point k) =
@@ -416,6 +422,12 @@ class (Choice p, Strong p) => Visiting p where
     . (forall f. Functor f => (forall r. r -> f r) -> (a -> f b) -> s -> f t)
     -> p i a b
     -> p i s t
+  default visit
+    :: forall i s t a b. (p i (Either a t, s) @ (Either b t, s), p i @ (Either a t, s)
+                         , p i (Either a t) @ Either b t, p i @ Either a t)
+    => (forall f. Functor f => (forall r. r -> f r) -> (a -> f b) -> s -> f t)
+    -> p i a b
+    -> p i s t
   visit f =
     let match :: s -> Either a t
         match s = f Right Left s
@@ -439,7 +451,7 @@ class (Choice p, Strong p) => Visiting p where
   ivisit f = coerce . visit (\point afb -> f point $ \_ -> afb)
 
 
-instance Functor f => Visiting (StarA f) where
+instance (Total f, Functor f) => Visiting (StarA f) where
   visit  f (StarA point k) = StarA point $ f point k
   ivisit f (StarA point k) = StarA point $ f point (\_ -> k)
 
@@ -461,7 +473,7 @@ instance Visiting FunArrow where
   visit  f (FunArrow k) = FunArrow $ runIdentity #. f pure (Identity #. k)
   ivisit f (FunArrow k) = FunArrow $ runIdentity #. f pure (\_ -> Identity #. k)
 
-instance Functor f => Visiting (IxStarA f) where
+instance (Total f, Functor f) => Visiting (IxStarA f) where
   visit  f (IxStarA point k) = IxStarA point $ \i  -> f point (k i)
   ivisit f (IxStarA point k) = IxStarA point $ \ij -> f point $ \i -> k (ij i)
 

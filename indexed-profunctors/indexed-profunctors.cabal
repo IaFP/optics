@@ -54,11 +54,15 @@ common language
                         TypeFamilies
                         TypeOperators
                         ViewPatterns
+  if impl(ghc >= 9.3)
+       default-extensions: PartialTypeConstructors
+                           ConstrainedClassMethods
 
 library
   import:           language
   hs-source-dirs:   src
 
   build-depends: base                   >= 4.10       && <5
+               , ghc-prim
 
   exposed-modules:    Data.Profunctor.Indexed
